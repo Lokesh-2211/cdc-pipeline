@@ -1,0 +1,16 @@
+{
+  "name": "orders-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "cdcuser",
+    "database.password": "cdcpassword",
+    "database.dbname": "cdcdb",
+    "topic.prefix": "cdc",
+    "table.include.list": "public.orders",
+    "plugin.name": "pgoutput",
+    "publication.autocreate.mode": "filtered",
+    "slot.name": "orders_slot"
+  }
+}
