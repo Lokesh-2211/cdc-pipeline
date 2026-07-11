@@ -12,7 +12,9 @@ sub-second latency.
 - **Debezium 2.6** (Kafka Connect) — reads the WAL, emits change events
 - **Redpanda** — Kafka-API-compatible message broker (lighter than running real Kafka + Zookeeper)
 - **Redpanda Console** — web UI to watch events flow through topics in real time
+- **Redis** — cache layer kept in sync by a downstream consumer (see below)
 - **pgAdmin** — used to browse/mutate the source data during development
+- **RedisInsight** — used to browse the Redis cache during development
 
 ## Why CDC instead of polling?
 Traditional "poll for changes" approaches (`WHERE updated_at > last_check`) can't reliably detect
@@ -83,7 +85,32 @@ Every message includes an `op` field marking exactly what happened:
 Deletes are also followed by a Kafka **tombstone** message (a null-value record for the same key) —
 this is a standard Kafka convention that marks the key eligible for removal under log compaction.
 
-## 5. Tear down
+## 5. Real-time cache invalidation (Postgres → Redis)
+
+A Python consumer (`cdc_to_redis.py`) demonstrates a concrete downstream use case for this
+pipeline: keeping a Redis cache automatically in sync with Postgres, with no manual cache-busting
+code anywhere in an application layer.
+
+Install dependencies and run it:
+
+```bash
+pip install kafka-python redis
+python cdc_to_redis.py
+```
+
+The consumer reads every event from `cdc.public.orders` and applies it to Redis:
+
+| Debezium `op` | Redis action |
+|---|---|
+| `r` (snapshot), `c` (insert), `u` (update) | `HSET order:<id>` with the row's current fields |
+| `d` (delete) | `DEL order:<id>` |
+| tombstone (null value) | ignored |
+
+With the consumer running, any change made in Postgres (via pgAdmin or `psql`) is reflected in
+Redis within milliseconds — verified using [RedisInsight](https://redis.io/insight/) to browse the
+cache live while making changes.
+
+## 6. Tear down
 
 ```bash
 docker compose down -v
@@ -99,7 +126,7 @@ docker compose down -v
   a good reminder that infrastructure problems are rarely where they first appear to be
 
 ## Next steps
-- [ ] Python consumer that reads `cdc.public.orders` and applies changes to Redis (cache invalidation)
+- [x] Python consumer that reads `cdc.public.orders` and applies changes to Redis (cache invalidation)
 - [ ] A second consumer that aggregates order totals and pushes to a live WebSocket dashboard
 - [ ] Handle schema evolution (add a column mid-stream, confirm the pipeline doesn't break)
 
