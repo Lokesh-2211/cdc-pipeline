@@ -110,6 +110,26 @@ With the consumer running, any change made in Postgres (via pgAdmin or `psql`) i
 Redis within milliseconds — verified using [RedisInsight](https://redis.io/insight/) to browse the
 cache live while making changes.
 
+## 5b. Schema evolution — tested live
+
+To confirm the pipeline handles schema changes gracefully (a common real-world failure point for
+CDC systems), a new column was added to the source table while the full pipeline was running:
+
+```sql
+ALTER TABLE orders ADD COLUMN priority VARCHAR(10) DEFAULT 'normal';
+UPDATE orders SET priority = 'high' WHERE customer_name = 'Bob Jones';
+```
+
+**Result:** Debezium picked up the new column automatically — no connector restart or config change
+required — and included it in the next event's schema and payload. The Redis consumer, written
+generically (it writes whatever fields exist in the event's `after` object rather than hardcoding
+column names), picked up the new `priority` field with zero code changes.
+
+One caveat worth noting: Redis only reflects the new field for rows that received a new event
+*after* the schema change — existing cached rows aren't retroactively updated until they're next
+touched. This is expected CDC behavior, not a bug, but worth being aware of when reasoning about
+cache freshness after a schema migration.
+
 ## 6. Tear down
 
 ```bash
