@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CDC Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --pending: #f59e0b;
+    --shipped: #38bdf8;
+    --delivered: #22c55e;
+    --unknown: #64748b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+  }
+  .subtitle {
+    color: var(--muted);
+    margin-bottom: 24px;
+    font-size: 14px;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    margin-right: 6px;
+  }
+  .status-dot.connected { background: #22c55e; }
+
+  .stats {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    min-width: 120px;
+  }
+  .stat-card .label {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .stat-card .value {
+    font-size: 28px;
+    font-weight: 700;
+    margin-top: 4px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr.flash { animation: flash 0.8s ease; }
+  @keyframes flash {
+    0% { background: rgba(56, 189, 248, 0.25); }
+    100% { background: transparent; }
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #0f172a;
+  }
+  .badge.pending { background: var(--pending); }
+  .badge.shipped { background: var(--shipped); }
+  .badge.delivered { background: var(--delivered); }
+  .badge.unknown { background: var(--unknown); color: white; }
+</style>
+</head>
+<body>
+
+<h1>Live Orders Dashboard</h1>
+<div class="subtitle">
+  <span id="statusDot" class="status-dot"></span>
+  <span id="statusText">Connecting...</span>
+  &nbsp;·&nbsp; Powered by Postgres → Debezium → Redpanda
+</div>
+
+<div class="stats" id="stats"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Customer</th>
+      <th>Product</th>
+      <th>Amount</th>
+      <th>Status</th>
+      <th>Priority</th>
+    </tr>
+  </thead>
+  <tbody id="ordersBody"></tbody>
+</table>
+
+<script>
+  const WS_URL = "ws://localhost:8765";
+  let ws;
+  let lastOrderIds = new Set();
+
+  function connect() {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      document.getElementById("statusDot").classList.add("connected");
+      document.getElementById("statusText").textContent = "Connected — live";
+    };
+
+    ws.onclose = () => {
+      document.getElementById("statusDot").classList.remove("connected");
+      document.getElementById("statusText").textContent = "Disconnected — retrying...";
+      setTimeout(connect, 2000);
+    };
+
+    ws.onerror = () => ws.close();
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      renderStats(data);
+      renderTable(data.orders);
+    };
+  }
+
+  function renderStats(data) {
+    const statsEl = document.getElementById("stats");
+    let html = `
+      <div class="stat-card">
+        <div class="label">Total Orders</div>
+        <div class="value">${data.total_orders}</div>
+      </div>`;
+    for (const [status, count] of Object.entries(data.status_counts)) {
+      html += `
+      <div class="stat-card">
+        <div class="label">${status}</div>
+        <div class="value">${count}</div>
+      </div>`;
+    }
+    statsEl.innerHTML = html;
+  }
+
+  function renderTable(orders) {
+    const tbody = document.getElementById("ordersBody");
+    const currentIds = new Set(orders.map(o => o.id));
+    tbody.innerHTML = orders.map(o => {
+      const status = (o.status || "unknown").toLowerCase();
+      const isNew = !lastOrderIds.has(o.id);
+      return `
+        <tr class="${isNew ? '' : 'flash'}">
+          <td>${o.id}</td>
+          <td>${o.customer_name}</td>
+          <td>${o.product}</td>
+          <td>$${o.amount ?? "-"}</td>
+          <td><span class="badge ${status}">${o.status}</span></td>
+          <td>${o.priority ?? "-"}</td>
+        </tr>`;
+    }).join("");
+    lastOrderIds = currentIds;
+  }
+
+  connect();
+</script>
+
+</body>
+</html>

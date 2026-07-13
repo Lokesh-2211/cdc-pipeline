@@ -13,6 +13,7 @@ sub-second latency.
 - **Redpanda** — Kafka-API-compatible message broker (lighter than running real Kafka + Zookeeper)
 - **Redpanda Console** — web UI to watch events flow through topics in real time
 - **Redis** — cache layer kept in sync by a downstream consumer (see below)
+- **Python (`websockets`, `kafka-python`, `redis`)** — two downstream consumers built on this pipeline
 - **pgAdmin** — used to browse/mutate the source data during development
 - **RedisInsight** — used to browse the Redis cache during development
 
@@ -110,7 +111,36 @@ With the consumer running, any change made in Postgres (via pgAdmin or `psql`) i
 Redis within milliseconds — verified using [RedisInsight](https://redis.io/insight/) to browse the
 cache live while making changes.
 
-## 5b. Schema evolution — tested live
+## 5b. Live dashboard (Postgres → WebSocket → browser)
+
+A second, independent consumer (`dashboard_server.py`) demonstrates a different downstream pattern:
+instead of writing to another store, it keeps an in-memory snapshot of every order and **pushes**
+live updates straight to any connected browser over a WebSocket — no polling, no page refresh.
+
+Install the one extra dependency and run it:
+
+```bash
+pip install websockets
+python dashboard_server.py
+```
+
+Then open `dashboard.html` directly in a browser. It connects to `ws://localhost:8765` and renders:
+- Summary stat cards (total orders, live counts per status)
+- A live table of every current order, with changed rows briefly highlighted
+
+![Live dashboard showing real-time order data](screenshots/dashboard-live.png)
+
+Both this dashboard and the Redis cache-invalidation consumer can run **at the same time**, reading
+independently from the same `cdc.public.orders` topic — a good illustration of why using a real
+streaming broker (rather than, say, a direct database trigger calling a webhook) matters: any number
+of independent downstream systems can consume the same event stream without coordinating with each
+other or touching the source database again.
+
+Note: Debezium encodes `NUMERIC`/`DECIMAL` columns (like `amount`) in a compact base64-encoded
+binary format rather than plain text — `dashboard_server.py` includes a small decoder
+(`decode_debezium_decimal`) to convert this back into a normal number for display.
+
+## 5c. Schema evolution — tested live
 
 To confirm the pipeline handles schema changes gracefully (a common real-world failure point for
 CDC systems), a new column was added to the source table while the full pipeline was running:
@@ -147,8 +177,10 @@ docker compose down -v
 
 ## Next steps
 - [x] Python consumer that reads `cdc.public.orders` and applies changes to Redis (cache invalidation)
-- [ ] A second consumer that aggregates order totals and pushes to a live WebSocket dashboard
-- [ ] Handle schema evolution (add a column mid-stream, confirm the pipeline doesn't break)
+- [x] A second consumer that pushes live updates to a WebSocket-powered dashboard
+- [x] Tested schema evolution live (see above)
+- [ ] Handle multiple tables in a single pipeline
+- [ ] Add retry/error handling and dead-letter logic to the consumers
 
 ## License
 MIT — see [LICENSE](LICENSE)
